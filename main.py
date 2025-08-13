@@ -1,13 +1,13 @@
 from fastapi import FastAPI
 from inngest import Inngest, TriggerEvent, RetryAfterError, NonRetriableError, Context
 import inngest.fast_api
-from inngest.experimental.ai.anthropic import Adapter as AnthropicAdapter
+from inngest.experimental import ai
 import logging
 
 logger = logging.getLogger("uvicorn.inngest")
 logger.setLevel(logging.DEBUG)
 # Initialize Inngest client
-inngest_client = Inngest(
+inngest_client = inngest.Inngest(
     app_id="design_doc_agent",
     logger=logger,
     is_production=False,
@@ -16,15 +16,15 @@ inngest_client = Inngest(
 # Inngest Function: design_doc_breakdown
 @inngest_client.create_function(
     fn_id="design_doc_breakdown",
-    trigger=TriggerEvent(event="app/doc.submitted"),
+    trigger=inngest.TriggerEvent(event="app/doc.submitted"),
 )
-async def design_doc_breakdown(ctx: Context) -> str:
+async def design_doc_breakdown(ctx: inngest.Context) -> str:
     ctx.logger.info(ctx.event)
 
     try:
-        adapter = AnthropicAdapter(
-            auth_key="your-anthropic-api-key",  # Replace with your actual API key
-            model="claude-3-5-sonnet-20230601"
+        adapter = ai.openai.Adapter(
+            auth_key="your-openai-api-key",
+            model="gpt-5"
         )
         
         with open(ctx.event.data['file_url'], 'r') as file:
@@ -41,11 +41,15 @@ async def design_doc_breakdown(ctx: Context) -> str:
         )
 
         csv_task_breakdown = await ctx.step.ai.infer(
-            step_id="breakdown_design_doc",
+            "call-openai",
             adapter=adapter,
-            body={ 
-                "prompt": task_breakdown_prompt,
-                "max_tokens": 2000
+            body={
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "content": task_breakdown_prompt,
+                    }
+                ],
             },
         )
 
@@ -59,15 +63,19 @@ async def design_doc_breakdown(ctx: Context) -> str:
         )
 
         sequencing_breakdown = await ctx.step.ai.infer(
-            step_id="convert_breakdown_to_csv",
+            "call-openai",
             adapter=adapter,
             body={
-                "prompt": sequencing_prompt,
-                "max_tokens": 2000
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "content": sequencing_prompt,
+                    }
+                ],
             },
         )
 
-        return sequencing_breakdown
+        return sequencing_breakdown["choices"][0]["message"]["content"]
 
     except FileNotFoundError:
         ctx.logger.error(f"File not found: {ctx.event.data['file_url']}")
